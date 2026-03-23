@@ -1,4 +1,4 @@
-# AGENTS.md — Guide for AI Agents
+# AGENTS.md — AI Agent Guide for WhatsSyntax
 
 This file instructs AI coding agents (Claude, Copilot, Cursor, etc.) on how to work in this repository.
 
@@ -6,116 +6,148 @@ This file instructs AI coding agents (Claude, Copilot, Cursor, etc.) on how to w
 
 ## Project Summary
 
-**SalonFlow** is a WhatsApp-first booking SaaS for hair salons and beauty studios.
+**WhatsSyntax** is a WhatsApp-clone Android app built with Kotlin. It replicates the core WhatsApp experience: real-time 1:1 messaging, contacts, status updates, and call history.
 
-- Clients book appointments by messaging the salon's WhatsApp number
-- The WhatsApp bot guides the conversation (service → staff → date → time → confirm)
-- Salon owners manage everything from a web admin dashboard
-- Automated WhatsApp reminders are sent before appointments
+**Tech stack:**
+- Android: Kotlin, MVVM + Repository pattern, Hilt DI, Room (local), Retrofit + OkHttp (remote), Coil (images)
+- Backend: Ktor (Kotlin), Exposed ORM, PostgreSQL 15, Redis 7, JWT auth
+- Shared: `packages/shared-models` — pure Kotlin/JVM DTOs used by both Android and backend
 
 ---
 
 ## Monorepo Layout
 
 ```
-apps/api/          NestJS backend (REST API + WhatsApp bot webhook handler)
-apps/web/          Next.js 14 frontend (admin dashboard + /book/:slug public page)
-packages/database/ Prisma schema and generated client — single source of truth for DB
-packages/types/    Shared TypeScript interfaces (no runtime code)
-packages/ui/       Shared shadcn/ui React components
-packages/config/   Shared ESLint, TSConfig, Prettier configs
-docs/              All documentation — keep in sync with code changes
-infra/docker/      Local dev Docker Compose (Postgres + Redis)
-.github/           CI/CD workflows and PR/issue templates
+app/                    Android application (Kotlin, MVVM, Hilt)
+  src/main/java/.../
+    MainActivity.kt
+    WhatsSyntaxApplication.kt
+    adapter/            RecyclerView adapters
+    data/
+      Datasource.kt     DEPRECATED — do not use from Fragments or ViewModels
+      model/            Domain models (being migrated to use String IDs + URL images)
+      local/            Room DAOs and database (Phase 2)
+      remote/           Retrofit ApiService and WebSocket client (Phase 1+)
+    di/                 Hilt modules (AppModule, NetworkModule, DatabaseModule)
+    ui/                 Fragments
+    viewmodel/          ViewModels (Phase 1+)
+    repository/         Repositories bridging local/remote (Phase 2+)
+
+packages/shared-models/ Pure Kotlin/JVM DTOs — no Android imports allowed
+  src/main/kotlin/.../
+    AuthDto.kt
+    UserDto.kt
+    ChatDto.kt
+    MessageDto.kt
+    StatusDto.kt
+    CallDto.kt
+
+services/api/           Ktor backend
+  src/main/kotlin/.../
+    Application.kt      Entry point
+    plugins/            Ktor plugin configuration
+    routing/            Route handlers per domain
+    data/               Exposed DAOs and table definitions (Phase 1+)
+    websocket/          WebSocket session manager (Phase 3+)
+
+infra/
+  docker-compose.yml    Local Postgres + Redis + API
+  scripts/
+    setup-dev.sh        One-command local setup
+    init-db.sql         DB initialization
+
+docs/                   Architecture, API, data model, setup
+.github/workflows/      CI: android-ci.yml, backend-ci.yml
 ```
 
 ---
 
-## Key Conventions
+## Architecture Rules
 
-### TypeScript
-- Strict mode enabled everywhere (`"strict": true`)
-- No `any` — use `unknown` and narrow types
-- Export types from `packages/types`, not from `apps/`
+### Android
 
-### NestJS (apps/api)
-- One module per domain: `BusinessModule`, `BookingModule`, `StaffModule`, etc.
-- All database queries use the Prisma client from `@salonflow/database`
-- All protected routes use `@UseGuards(ClerkAuthGuard)`
-- Every controller must extract `businessId` from the JWT — never trust client-sent businessId
-- Return HTTP exceptions with `HttpException` or NestJS built-ins
+- **Fragments must NOT instantiate `Datasource` directly.** `Datasource.kt` is being retired. All data access goes through a `ViewModel` → `Repository` chain.
+- **ViewModels must NOT import Android UI classes** (`View`, `Fragment`, `Activity`). Use `StateFlow` or `LiveData` to communicate with the UI layer.
+- **All async work uses Kotlin Coroutines** with `viewModelScope` or `lifecycleScope`. No `AsyncTask`, no `Thread`.
+- **Hilt DI is mandatory** for all `ViewModel` and `Repository` instances. Do not instantiate these with `by viewModels { MyViewModel() }` without Hilt.
+- **Images are loaded with Coil** — never call `setImageResource(R.drawable.img_*)` for user content. Use `imageView.load(url) { placeholder(...) }`.
+- **Contact.image (Int)** is deprecated — use `avatarUrl: String?` instead. Every PR that adds a new contact image reference must use the URL field.
 
-### Next.js (apps/web)
-- App Router only — no Pages Router
-- Server Components by default; use `"use client"` only when necessary
-- Protected routes go under `app/(dashboard)/`
-- Public booking pages go under `app/(public)/book/[slug]/`
-- API calls from server components use fetch with revalidation; from client use SWR or React Query
+### Backend
 
-### Database / Prisma
-- All schema changes go through migrations (`prisma migrate dev`)
-- Never edit the generated client — it lives in `packages/database/generated/`
-- All timestamps stored in UTC
-- Multi-tenant: every query must be scoped by `businessId`
+- **All routes under `/v1/auth/**` are public.** Every other route requires JWT bearer auth.
+- **JWT user ID** is always extracted from the token, never from the request body or query params.
+- **Database queries use Exposed DSL**, not raw SQL. Use transactions for multi-step writes.
+- **OTP dev bypass:** set `DEV_OTP_BYPASS=123456` to skip SMS and accept that code in tests/dev. Never enable in production.
+- **No business logic in routing handlers** — routing calls a function from `domain/`. Route files should be thin.
 
-### WhatsApp Bot
-- Bot logic lives in `apps/api/src/whatsapp/`
-- Conversation state is stored in Redis with key `bot:session:{phoneNumber}`
-- All incoming webhook requests return `200 OK` immediately; processing is async
-- Template messages must be pre-approved by Meta before use in production
+### Shared Models
 
-### Commit Convention (Conventional Commits)
+- `packages/shared-models` must remain a **pure Kotlin/JVM library** — no Android SDK imports.
+- All DTOs are annotated with `@Serializable` (kotlinx.serialization).
+- Any change to a DTO field name or type is a **breaking change** — coordinate Android + backend changes in one PR.
+
+---
+
+## What NOT To Do
+
+- **Do NOT commit `.env` files** — use `.env.example` for documentation only.
+- **Do NOT call `Datasource()` from a Fragment or ViewModel** — this is the pattern we're removing.
+- **Do NOT add `android.*` imports to `packages/shared-models`** — it must stay pure JVM.
+- **Do NOT use `setImageResource()` for contact/user avatars** — use Coil with URL.
+- **Do NOT store JWT tokens in `SharedPreferences`** — use `DataStore` (encrypted).
+- **Do NOT skip the Hilt annotation processor** — always add `kapt("hilt-android-compiler")` for any module using Hilt.
+- **Do NOT use `notifyDataSetChanged()`** — prefer `DiffUtil.ItemCallback` in all adapters.
+- **Do NOT use `Handler` or `postDelayed` for coroutine work** — use `delay()` in a coroutine.
+
+---
+
+## Commit Convention (Conventional Commits)
+
 ```
-feat(api): add endpoint for booking creation
-fix(bot): handle null service selection in FSM
-chore(infra): update docker-compose postgres version
-docs(api): add OpenAPI annotations to availability endpoint
-test(booking): add unit tests for conflict detection
+feat(android): add ChatRepository with Room DAO
+fix(backend): correct JWT expiry validation
+chore(ci): add lint step to GitHub Actions workflow
+docs(api): document /v1/messages POST endpoint
+refactor(android): migrate ChatFragment to ChatViewModel
+test(shared): add serialization roundtrip tests for MessageDto
 ```
 
-### Branch Naming
+Format: `type(scope): description`
+Scopes: `android`, `backend`, `shared`, `infra`, `ci`, `docs`
+
+---
+
+## Branch Naming
+
 ```
-feat/issue-number-short-description
-fix/issue-number-short-description
+feature/issue-N-short-description
+fix/issue-N-short-description
 chore/short-description
 docs/short-description
 ```
 
 ---
 
-## What NOT to Do
-
-- Do NOT commit `.env` files — use `.env.example` for documentation
-- Do NOT bypass Clerk auth on any route that touches business data
-- Do NOT store raw phone numbers without normalizing to E.164 format (`+491234567890`)
-- Do NOT call Prisma directly from `apps/web` — go through the API
-- Do NOT add new packages to `packages/` without updating `pnpm-workspace.yaml`
-- Do NOT use `any` type — use proper types or `unknown`
-- Do NOT hardcode business IDs or phone numbers anywhere
-
----
-
 ## Running the Project
 
 ```bash
-# Install all dependencies
-pnpm install
+# Prerequisites: Java 17+, Docker, Android Studio
 
-# Start local services
-docker compose -f infra/docker/docker-compose.yml up -d
+# One-command dev setup (starts Postgres + Redis, builds shared-models)
+./infra/scripts/setup-dev.sh
 
-# Run migrations
-pnpm --filter @salonflow/database db:migrate
+# Start backend only
+./gradlew :services:api:run
 
-# Start all apps
-pnpm dev
+# Run all tests
+./gradlew test
 
-# Run tests
-pnpm test
+# Run Android lint
+./gradlew :app:lintDebug
 
-# Lint + typecheck
-pnpm lint
-pnpm typecheck
+# Build debug APK
+./gradlew :app:assembleDebug
 ```
 
 ---
@@ -124,15 +156,29 @@ pnpm typecheck
 
 | File | Purpose |
 |---|---|
-| `packages/database/prisma/schema.prisma` | The DB schema — read this before any data work |
-| `apps/api/src/app.module.ts` | Root NestJS module — all modules registered here |
-| `apps/web/app/layout.tsx` | Root Next.js layout with Clerk provider |
-| `apps/api/src/whatsapp/whatsapp.service.ts` | WhatsApp bot logic |
-| `apps/api/src/booking/booking.service.ts` | Core booking + availability logic |
-| `docs/architecture.md` | Full system design |
+| `app/src/main/java/.../data/Datasource.kt` | **DEPRECATED** — being replaced by Room + API; do not add new calls to this |
+| `app/src/main/java/.../data/model/Contact.kt` | Core domain model — `image: Int` is being migrated to `avatarUrl: String?` |
+| `app/src/main/java/.../data/model/Message.kt` | Core message model — needs `id`, `chatId`, `senderId` fields for Phase 2 |
+| `app/src/main/java/.../ui/ChatDetailFragment.kt` | First Fragment to migrate to ViewModel in Phase 2 |
+| `packages/shared-models/src/.../MessageDto.kt` | Canonical message DTO for Android ↔ backend |
+| `services/api/src/.../routing/AuthRoutes.kt` | Auth endpoints stub — wire real JWT + Postgres in Phase 1 |
+| `services/api/src/main/resources/application.conf` | Backend config — all env vars documented here |
+| `infra/docker-compose.yml` | Local dev: Postgres + Redis + API |
+| `docs/architecture.md` | System design overview |
+| `docs/api.md` | REST endpoint catalogue |
 
 ---
 
 ## Environment Variables
 
 See `.env.example` for all required variables with descriptions.
+
+### Key variables
+
+| Variable | Description | Default (dev) |
+|---|---|---|
+| `DATABASE_URL` | Postgres JDBC URL | `jdbc:postgresql://localhost:5432/whatssyntax` |
+| `REDIS_URL` | Redis URL | `redis://localhost:6379` |
+| `JWT_SECRET` | HMAC-256 secret for JWT signing | dev-only placeholder |
+| `DEV_OTP_BYPASS` | Fixed OTP code that skips SMS (dev/test only) | `123456` |
+| `PORT` | Backend HTTP port | `8080` |
