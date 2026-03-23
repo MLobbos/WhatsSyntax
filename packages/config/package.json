@@ -1,0 +1,10 @@
+{
+  "name": "@salonflow/config",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    "./eslint": "./eslint.js",
+    "./tsconfig": "./tsconfig.base.json",
+    "./prettier": "./prettier.js"
+  }
+}
