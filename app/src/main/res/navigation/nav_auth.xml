@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_auth"
+    app:startDestination="@id/phoneEntryFragment">
+
+    <fragment
+        android:id="@+id/phoneEntryFragment"
+        android:name="com.syntax_institut.whatssyntax.ui.auth.PhoneEntryFragment"
+        android:label="fragment_phone_entry"
+        tools:layout="@layout/fragment_phone_entry">
+        <action
+            android:id="@+id/action_phoneEntry_to_otpVerify"
+            app:destination="@id/otpVerifyFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/otpVerifyFragment"
+        android:name="com.syntax_institut.whatssyntax.ui.auth.OtpVerifyFragment"
+        android:label="fragment_otp_verify"
+        tools:layout="@layout/fragment_otp_verify" />
+
+</navigation>

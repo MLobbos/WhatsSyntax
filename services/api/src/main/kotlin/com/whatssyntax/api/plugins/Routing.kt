@@ -1,24 +1,24 @@
 package com.whatssyntax.api.plugins
 
-import com.whatssyntax.api.routing.*
+import com.whatssyntax.api.domain.auth.JwtService
+import com.whatssyntax.api.domain.auth.UserRepository
+import com.whatssyntax.api.routing.authRoutes
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
-fun Application.configureRouting() {
+fun Application.configureRouting(
+    userRepository: UserRepository,
+    jwtService: JwtService
+) {
     routing {
         get("/health") {
             call.respondText("OK")
         }
 
         route("/v1") {
-            authRoutes()
-            // Phase 2+: uncomment as implemented
-            // chatRoutes()
-            // messageRoutes()
-            // contactRoutes()
-            // statusRoutes()
-            // callRoutes()
+            authRoutes(userRepository, jwtService)
+            // Phase 2+: chatRoutes(), messageRoutes(), contactRoutes(), statusRoutes()
         }
     }
 }

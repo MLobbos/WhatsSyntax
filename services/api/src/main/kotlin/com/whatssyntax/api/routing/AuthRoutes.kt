@@ -1,41 +1,43 @@
 package com.whatssyntax.api.routing
 
+import com.whatssyntax.api.domain.auth.JwtService
+import com.whatssyntax.api.domain.auth.UserRepository
 import com.whatssyntax.api.plugins.BadRequestException
 import com.whatssyntax.api.plugins.UnauthorizedException
 import com.whatssyntax.shared.AuthRequestDto
 import com.whatssyntax.shared.AuthResponseDto
 import com.whatssyntax.shared.OtpVerifyDto
-import com.whatssyntax.shared.UserDto
+import com.whatssyntax.shared.RefreshTokenDto
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
-// Placeholder in-memory OTP store — replaced by Redis in Phase 1
-private val otpStore = mutableMapOf<String, String>()
-
-fun Route.authRoutes() {
+fun Route.authRoutes(
+    userRepository: UserRepository,
+    jwtService: JwtService
+) {
     route("/auth") {
 
         /**
          * POST /v1/auth/request-otp
-         * Body: { "phone": "+49123456789" }
-         * Sends OTP via SMS (or logs to console if DEV_OTP_BYPASS is set).
+         * Sends a 6-digit OTP to the given phone number.
+         * In dev: set env DEV_OTP_BYPASS=123456 to skip SMS.
          */
         post("/request-otp") {
             val body = call.receive<AuthRequestDto>()
             if (body.phone.isBlank()) throw BadRequestException("phone is required")
 
             val devBypass = System.getenv("DEV_OTP_BYPASS")
+            val code = devBypass ?: (100000..999999).random().toString()
+
+            userRepository.saveOtp(body.phone, code)
+
             if (devBypass != null) {
-                // Dev mode: store fixed code, skip SMS
-                otpStore[body.phone] = devBypass
-                call.application.environment.log.info("DEV OTP for ${body.phone}: $devBypass")
+                call.application.environment.log.info("DEV OTP for ${body.phone}: $code")
             } else {
-                // TODO Phase 1: send real SMS via Twilio
-                val code = (100000..999999).random().toString()
-                otpStore[body.phone] = code
-                call.application.environment.log.info("OTP for ${body.phone}: $code (STUB — wire Twilio in Phase 1)")
+                // TODO: replace with real Twilio call
+                call.application.environment.log.info("STUB SMS to ${body.phone}: $code")
             }
 
             call.respond(mapOf("message" to "OTP sent"))
@@ -43,30 +45,59 @@ fun Route.authRoutes() {
 
         /**
          * POST /v1/auth/verify-otp
-         * Body: { "phone": "+49123456789", "code": "123456" }
-         * Returns JWT access + refresh tokens.
+         * Validates OTP, creates or retrieves user, returns JWT pair.
          */
         post("/verify-otp") {
             val body = call.receive<OtpVerifyDto>()
-            val expected = otpStore[body.phone]
-                ?: throw UnauthorizedException("No OTP requested for this phone")
-            if (body.code != expected) throw UnauthorizedException("Invalid OTP code")
 
-            otpStore.remove(body.phone)
+            val valid = userRepository.consumeOtp(body.phone, body.code)
+            if (!valid) throw UnauthorizedException("Invalid or expired OTP code")
 
-            // TODO Phase 1: look up or create user in Postgres, issue real JWT
-            val stubUser = UserDto(
-                id = "stub-user-id",
-                phone = body.phone,
-                displayName = "New User",
-                createdAt = "2024-01-01T00:00:00Z"
+            val user   = userRepository.findOrCreateUser(body.phone)
+            val tokens = jwtService.generateTokenPair(user.id)
+
+            userRepository.saveRefreshToken(
+                id         = tokens.refreshTokenId,
+                userId     = user.id,
+                tokenHash  = jwtService.hashToken(tokens.refreshToken),
+                expiresAt  = jwtService.refreshTokenExpiryDate()
             )
-            val stubResponse = AuthResponseDto(
-                accessToken = "stub-access-token",
-                refreshToken = "stub-refresh-token",
-                user = stubUser
+
+            call.respond(
+                AuthResponseDto(
+                    accessToken  = tokens.accessToken,
+                    refreshToken = tokens.refreshToken,
+                    user         = user
+                )
             )
-            call.respond(stubResponse)
+        }
+
+        /**
+         * POST /v1/auth/refresh
+         * Exchange a valid refresh token for a new access token.
+         */
+        post("/refresh") {
+            val body = call.receive<RefreshTokenDto>()
+            val hash   = jwtService.hashToken(body.refreshToken)
+            val userId = userRepository.findUserByRefreshTokenHash(hash)
+                ?: throw UnauthorizedException("Invalid or expired refresh token")
+
+            // Rotate refresh token
+            userRepository.deleteRefreshToken(hash)
+            val tokens = jwtService.generateTokenPair(userId)
+            userRepository.saveRefreshToken(
+                id        = tokens.refreshTokenId,
+                userId    = userId,
+                tokenHash = jwtService.hashToken(tokens.refreshToken),
+                expiresAt = jwtService.refreshTokenExpiryDate()
+            )
+
+            call.respond(
+                mapOf(
+                    "accessToken"  to tokens.accessToken,
+                    "refreshToken" to tokens.refreshToken
+                )
+            )
         }
     }
 }

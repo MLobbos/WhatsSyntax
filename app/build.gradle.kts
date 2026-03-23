@@ -4,6 +4,7 @@ plugins {
     id("androidx.navigation.safeargs.kotlin")
     id("com.google.dagger.hilt.android")
     id("kotlin-kapt")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -70,6 +71,16 @@ dependencies {
 
     // Image loading (replaces R.drawable.img_* in Phase 2)
     implementation("io.coil-kt:coil:2.5.0")
+
+    // Networking
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("com.jakewharton.retrofit2:retrofit2-kotlinx-serialization-converter:1.0.0")
+
+    // Shared models (DTOs)
+    implementation(project(":packages:shared-models"))
 
     // Test
     testImplementation("junit:junit:4.13.2")
